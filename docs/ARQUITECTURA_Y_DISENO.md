@@ -2,8 +2,8 @@
 
 **Proyecto:** Predicción y monitoreo de la calidad del aire en Lima Metropolitana
 **Curso:** Minería de Datos 2026-I — UNMSM-FISI
-**Estado:** Borrador v1 — pendiente de aprobación del tema por el docente (S15)
-**Última actualización:** 13 de julio de 2026
+**Estado:** v2 — implementado y publicado en https://github.com/AxcelCH/calidad-aire-lima (hosting pendiente, ver sección 11)
+**Última actualización:** 14 de julio de 2026
 
 > **Cómo usar este documento:** es la referencia técnica única del proyecto. Cualquier decisión de arquitectura, regla de negocio o funcionalidad debe reflejarse aquí antes de darse por definitiva. Cada cambio relevante debe agregarse a la tabla de la sección 15 (Historial de cambios). Este archivo, junto con `CONTEXT_LOG.md`, está pensado para poder pegarse al inicio de una conversación con cualquier modelo de IA (Claude, Fable u otro) y que retome el proyecto sin perder contexto.
 
@@ -30,7 +30,7 @@ Dashboard analítico de 4 paneles (EDA + clustering, predictivo, pronóstico, CR
 |---|---|---|
 | Lenguaje | Python 3.11 | Todo el curso y las librerías de ML (sklearn, xgboost, shap, statsmodels) son Python. Evita traducir lógica a JS. |
 | Framework de app / dashboard | Streamlit | Recomendado por el propio sílabo, curva de aprendizaje mínima, un solo archivo puede levantar los 4 paneles con `st.tabs()`. |
-| Hosting del dashboard | **Hugging Face Spaces** (SDK Streamlit) | Gratis, pensado para apps de ML (sin timeouts agresivos como las funciones serverless de Vercel/Firebase, que además no instalan bien `xgboost`/`shap`/`prophet`). Despliegue automático desde GitHub. |
+| Hosting del dashboard | **Pendiente** — HF Spaces descartado el 14/07/2026: el free tier actual solo ofrece ZeroGPU (exclusivo de Gradio) y CPU Basic pasó a requerir suscripción PRO. Candidato principal: **Streamlit Community Cloud** (gratis, deploy directo del repo GitHub) | La app es un solo servicio Streamlit sin dependencias de la plataforma: cualquier host que corra `streamlit run app.py` sirve. Ver sección 11. |
 | Modelos de clasificación | scikit-learn `RandomForestClassifier` vs XGBoost | Pedido explícito de la rúbrica (comparación obligatoria de ≥2 modelos). |
 | Interpretabilidad | `shap` (TreeExplainer) | Obligatorio en Panel 2. |
 | Clustering | scikit-learn `KMeans` (+ `DBSCAN` opcional) | Obligatorio en Panel 1. |
@@ -194,6 +194,10 @@ Ver los archivos `.env.example` y `.gitignore` en esta misma carpeta.
 
 ## 11. Plan de despliegue
 
+> **⚠️ Actualización 14/07/2026:** el plan original con Hugging Face Spaces quedó **bloqueado**: HF eliminó el SDK Streamlit del free tier (solo queda ZeroGPU, exclusivo de Gradio; CPU Basic y Docker requieren pago). Se creó el Space `Lecxa/calidad-aire-lima` con el código completo, pero queda en "Configuration error" y no puede cambiarse a CPU Basic sin PRO. **Decisión del equipo: entregar el repo de GitHub y decidir hosting después.** Plan recomendado cuando se retome: [Streamlit Community Cloud](https://share.streamlit.io) → "New app" → conectar el repo `AxcelCH/calidad-aire-lima` → main file `app.py` → cargar los secrets (`WAQI_API_TOKEN`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`) en *Advanced settings → Secrets*. El código no necesita ningún cambio.
+
+Plan original (referencia histórica):
+
 1. Crear cuenta en Hugging Face (si no existe) y crear un *Space* nuevo, SDK = Streamlit.
 2. Conectar el Space al repositorio de GitHub del equipo (o subir el código directo por git remoto del Space).
 3. En *Space settings → Variables and secrets*, cargar las variables de la sección 10.
@@ -245,3 +249,7 @@ Ver los archivos `.env.example` y `.gitignore` en esta misma carpeta.
 | Fecha | Cambio | Motivo | Quién |
 |---|---|---|---|
 | 2026-07-13 | Creación del documento de diseño e implementación v1 (arquitectura, reglas de negocio, requerimientos, plan de despliegue) | Definir cómo se va a construir el proyecto antes de empezar a programar | Asistente + Jeremi |
+| 2026-07-14 | Implementación completa (v2): código de los 4 paneles, modelos, CRUD y tests publicados en github.com/AxcelCH/calidad-aire-lima | Ejecutar el diseño v1 | Asistente + Jeremi |
+| 2026-07-14 | Regla de negocio 2 refinada en la implementación: un registro horario se descarta solo si **todos** los contaminantes están vacíos; los NaN parciales los maneja cada modelo (clustering hace dropna de las 3 variables; el clasificador exige PM2.5 en los rezagos) | Aprovechar más data sin sesgar los modelos | Asistente |
+| 2026-07-14 | Hosting: HF Spaces descartado (free tier sin Streamlit: ZeroGPU es Gradio-only y CPU Basic pide PRO); decisión de entregar solo el repo y evaluar Streamlit Community Cloud después | Cambio de política de precios de Hugging Face detectado al desplegar | Jeremi |
+| 2026-07-14 | CRUD con fallback automático a SQLite local cuando no hay credenciales de Supabase | Degradación controlada (principio de diseño 5) y permite desarrollar sin la cuenta de Supabase creada | Asistente |
