@@ -46,4 +46,7 @@ def load_raw(force_download: bool = False) -> pd.DataFrame:
     cached = None if force_download else _find_cached_csv()
     path = cached or download_csv()
     logger.info("Leyendo CSV crudo: %s", path)
-    return pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig", dtype=str)
+    try:  # el CSV oficial es coma-separado; el motor C es ~10x mas rapido
+        return pd.read_csv(path, encoding="utf-8-sig", dtype=str, low_memory=False)
+    except pd.errors.ParserError:  # por si el portal cambia el separador
+        return pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig", dtype=str)
