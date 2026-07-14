@@ -34,8 +34,8 @@ Implementación completa y verificada (pipeline end-to-end + 8 tests pytest), pu
 
 ## Próximos pasos inmediatos
 
-1. **Descargar el CSV real de SENAMHI** (65.33 MB, URL directa en `.env.example`) y colocarlo en `calidad-aire-lima/data_cache/` — es el único bloqueador para entrenar con data real. Nota: el portal bloquea descargas no-navegador; descargarlo desde Chrome.
-2. Correr `python scripts/run_experiments.py` con el CSV real y guardar las métricas para el Reporte PDF.
+1. ~~Descargar el CSV real~~ ✅ Hecho (14/07): CSV en `data_cache/`, modelos ejecutados, métricas en `docs/RESULTADOS_DATA_REAL.md`.
+2. Usar las métricas reales en el Reporte PDF (tablas listas en `docs/RESULTADOS_DATA_REAL.md`).
 3. Decidir el hosting definitivo (candidato: Streamlit Community Cloud con login GitHub de AxcelCH; alternativa: HF Spaces PRO o app reescrita en Gradio).
 4. Crear el proyecto en Supabase y cargar `SUPABASE_URL`/`SUPABASE_ANON_KEY` en `.env` (mientras tanto el CRUD usa SQLite local automáticamente).
 5. Repartir los 4 paneles entre los 3 integrantes y ensayar las preguntas de modificación en vivo (hiperparámetros expuestos: `test_size`, `n_estimators`, `learning_rate`, `k`).
@@ -67,9 +67,9 @@ Implementación completa y verificada (pipeline end-to-end + 8 tests pytest), pu
 - **Dataset oficial:** https://www.datosabiertos.gob.pe/dataset/monitoreo-de-los-contaminantes-del-aire-en-lima-metropolitana-servicio-nacional-de
 - El token WAQI está solo en `calidad-aire-lima/.env` (local, gitignored) — nunca subirlo al repo.
 
-## Resultados de la verificación (14/07/2026, datos sintéticos formato SENAMHI)
+## Resultados con la DATA REAL de SENAMHI (14/07/2026)
 
-Pipeline end-to-end verificado (los valores exactos cambiarán con el CSV real): limpieza descarta vacíos y lo reporta; clustering con codo+silueta OK; RF F1=0.862/AUC=0.994 vs XGBoost F1=0.836/AUC=0.991 con SMOTE automático; SHAP OK; Holt-Winters MAPE 6.6% vs baseline MM-7d 15.0%; CRUD (crear/listar/editar-observación/borrado-lógico) OK en SQLite; conversión AQI→µg/m³ validada contra el dato real de San Borja (AQI 83 ≈ 26.3 µg/m³). Los 8 tests de `pytest` pasan.
+CSV oficial descargado (68.5 MB, 577,794 registros horarios, 2015→2024-05, 7 estaciones). Resultados completos en `calidad-aire-lima/docs/RESULTADOS_DATA_REAL.md`. Resumen: 19.58% de registros descartados (todos los contaminantes vacíos); clustering k=2 (silueta 0.405, perfiles "días críticos" vs "típicos"); clasificación `excede_pm25` con 3.6% de prevalencia → SMOTE, **Random Forest gana** (F1 0.443, recall 0.524, AUC 0.939 vs XGBoost F1 0.362); pronóstico: la media móvil 7d es un baseline fuerte, Holt-Winters solo gana en SJL y VMT (hallazgo honesto para el reporte). Ajustes de código por el formato real: HORA en HHMMSS, estaciones con guiones bajos, lectura con motor C (~10x más rápida), serie de pronóstico limitada a ~3 años recientes con frecuencia diaria continua. Verificación previa: CRUD OK (SQLite), AQI→µg/m³ validada contra San Borja en vivo, 8 tests pytest pasan.
 
 ## Cómo continuar esta conversación con otra IA
 
@@ -85,4 +85,4 @@ Pipeline end-to-end verificado (los valores exactos cambiarán con el CSV real):
 | 2026-07-12 | Elegido el tema (calidad del aire, SENAMHI) y creada la propuesta inicial | `Propuesta_Proyecto_MineriaDeDatos.docx` |
 | 2026-07-13 | Explorada alternativa de recolección por API/scraping; descartado scraping de Google Maps por riesgo de ToS; validada la API WAQI con un token real (San Borja y 7 estaciones más); propuesta actualizada | `Propuesta_Proyecto_MineriaDeDatos_v2.docx` |
 | 2026-07-13 | Definida la arquitectura de implementación (Streamlit + Hugging Face Spaces + Supabase) y creada toda la documentación técnica | `ARQUITECTURA_Y_DISENO.md`, `CONTEXT_LOG.md`, `.env.example`, `.gitignore` |
-| 2026-07-14 | **Implementación completa del proyecto**: código de los 4 paneles + modelos + CRUD + tests; repo público creado y poblado (github.com/AxcelCH/calidad-aire-lima, 10 commits); token WAQI verificado en vivo y sacado del `.env.example` público; pipeline verificado end-to-end con datos sintéticos (CSV real pendiente de descarga manual — el portal bloquea descargas automatizadas); Space HF creado pero inutilizable para Streamlit en el free tier actual → hosting pospuesto por decisión de Jeremi | `calidad-aire-lima/` completo, `CONTEXT_LOG.md`, `ARQUITECTURA_Y_DISENO.md` |
+| 2026-07-14 | **Implementación completa del proyecto**: código de los 4 paneles + modelos + CRUD + tests; repo público creado y poblado (github.com/AxcelCH/calidad-aire-lima, 10 commits); token WAQI verificado en vivo y sacado del `.env.example` público; pipeline verificado end-to-end con datos sintéticos (CSV real pendiente
