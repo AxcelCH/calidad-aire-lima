@@ -14,7 +14,7 @@ license: mit
 
 Proyecto del curso **Minería de Datos 2026-I (UNMSM — FISI)**. Dashboard analítico de 4 paneles construido con **datos reales del estado peruano**: el histórico horario de contaminantes de **SENAMHI** ([datosabiertos.gob.pe](https://www.datosabiertos.gob.pe/dataset/monitoreo-de-los-contaminantes-del-aire-en-lima-metropolitana-servicio-nacional-de), licencia ODC-BY) y el dato en vivo de la **API WAQI** ([aqicn.org](https://aqicn.org)).
 
-**Demo en vivo:** desplegado en Hugging Face Spaces (ver enlace del repositorio).
+**Estado del despliegue:** hosting en definición. La app corre local con `streamlit run app.py`; el candidato para hosting gratuito es [Streamlit Community Cloud](https://share.streamlit.io) (conectar este repo → main file `app.py` → cargar secrets). Nota: el free tier de HF Spaces ya no soporta el SDK Streamlit (jul-2026).
 
 ## Los 4 paneles
 
