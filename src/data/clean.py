@@ -47,7 +47,7 @@ def parse_datetime(df: pd.DataFrame) -> pd.DataFrame:
     """Construye la columna 'fecha_hora' (datetime) y 'fecha_dia' (date).
 
     Soporta FECHA como YYYYMMDD (formato del portal) o como fecha ya parseable,
-    y HORA como '13:00', 13 o 1300.
+    y HORA como '13:00', 13 o 130000 (HHMMSS, formato del CSV oficial).
     """
     out = df.copy()
     fecha_raw = out["fecha"].astype(str).str.strip().str.split(".").str[0]
@@ -59,7 +59,10 @@ def parse_datetime(df: pd.DataFrame) -> pd.DataFrame:
     horas = pd.Series(0, index=out.index)
     if hora_raw is not None:
         hora_str = hora_raw.astype(str).str.strip().str.split(".").str[0]
-        horas = pd.to_numeric(hora_str.str.replace(":", "").str[:2], errors="coerce").fillna(0)
+        hora_num = pd.to_numeric(hora_str.str.replace(":", ""), errors="coerce").fillna(0)
+        # El CSV oficial usa HHMMSS (ej. 50000 = 05:00:00, 230000 = 23:00:00);
+        # si el valor es <=23 ya viene como hora simple
+        horas = hora_num.where(hora_num <= 23, hora_num // 10000)
         horas = horas.clip(0, 23).astype(int)
 
     out["fecha_hora"] = fecha + pd.to_timedelta(horas, unit="h")
@@ -94,7 +97,10 @@ def clean_hourly(df_raw: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     any_pollutant = df[[c for c in POLLUTANTS if c in df.columns]].notna().any(axis=1)
     mask = valid_date & any_pollutant
     cleaned = df.loc[mask].copy()
-    cleaned["estacion"] = cleaned["estacion"].astype(str).str.strip().str.title()
+    # 'CAMPO_DE_MARTE' -> 'Campo De Marte' (coincide con el mapeo de estaciones WAQI)
+    cleaned["estacion"] = (
+        cleaned["estacion"].astype(str).str.replace("_", " ").str.strip().str.title()
+    )
 
     report = {
         "registros_totales": total,
