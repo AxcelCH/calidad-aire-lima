@@ -11,16 +11,23 @@ import pandas as pd
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 
-def station_series(df_daily: pd.DataFrame, station: str) -> pd.Series:
-    """Serie diaria continua de PM2.5 de una estacion (huecos interpolados)."""
+def station_series(
+    df_daily: pd.DataFrame, station: str, max_days: int = 1095
+) -> pd.Series:
+    """Serie diaria continua de PM2.5 de una estacion.
+
+    Se interpolan todos los huecos para conservar la frecuencia diaria (que
+    Holt-Winters necesita para la estacionalidad semanal) y se limita a los
+    ultimos `max_days` (~3 anios) para modelar el regimen reciente y no
+    arrastrar cambios de sensor/estacion de anios antiguos.
+    """
     serie = (
         df_daily[df_daily["estacion"] == station]
         .set_index("fecha_dia")["pm25"]
         .asfreq("D")
-        .interpolate(limit=7)
-        .dropna()
+        .interpolate(limit_direction="both")
     )
-    return serie
+    return serie.iloc[-max_days:]
 
 
 def _mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
