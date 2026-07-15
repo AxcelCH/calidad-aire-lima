@@ -20,10 +20,12 @@ Proyecto del curso **Minería de Datos 2026-I (UNMSM — FISI)**. Dashboard anal
 
 | Panel | Contenido | Técnicas |
 |---|---|---|
-| 📊 EDA + Clustering | Estadísticas, histogramas/boxplots con outliers, correlaciones, K-means con codo y silueta | K-means, IQR |
-| 🤖 Predictivo | ¿El promedio diario de PM2.5 excederá el ECA peruano (50 µg/m³, D.S. 003-2017-MINAM)? | Random Forest vs XGBoost, SMOTE, SHAP |
-| 📈 Pronóstico | Serie diaria de PM2.5 por estación, pronóstico a 4-14 días con MAPE/RMSE vs baseline | Holt-Winters (statsmodels) |
-| 🗂️ CRUD | Guarda consultas: predicción del modelo vs valor real en vivo (WAQI). Editar/eliminar con trazabilidad | Supabase (Postgres) con fallback SQLite |
+| 📊 EDA + Clustering | Estadísticas, histogramas/boxplots con outliers (1.5·IQR), correlaciones, mapa de estaciones, K-means con codo y silueta, DBSCAN con detección de outliers | K-means vs DBSCAN, IQR |
+| 🤖 Predictivo | ¿El promedio diario de PM2.5 excederá el ECA peruano (50 µg/m³, D.S. 003-2017-MINAM)? Matriz de confusión y métricas por clase | MLP vs Random Forest vs XGBoost, SMOTE, SHAP |
+| 📈 Pronóstico | Serie diaria de PM2.5 por estación con tendencia, pronóstico a 4-14 días con MAPE/RMSE | Holt-Winters vs ARIMA(1,1,1) vs baseline MM-7d |
+| 🗂️ CRUD | Guarda consultas (automáticas con WAQI en vivo, o con **entrada manual de datos**): predicción del modelo + datos de entrada. Editar/eliminar con trazabilidad | Supabase (Postgres) con fallback SQLite |
+
+La correspondencia punto por punto con la rúbrica del curso está en [`docs/CHECKLIST_REQUISITOS.md`](docs/CHECKLIST_REQUISITOS.md).
 
 ## Arranque local
 

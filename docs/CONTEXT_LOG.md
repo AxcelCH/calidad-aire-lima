@@ -6,7 +6,7 @@
 
 ## Estado actual (una línea)
 
-Implementación completa y verificada (pipeline end-to-end + 8 tests pytest), publicada en el repo público **github.com/AxcelCH/calidad-aire-lima**; hosting pospuesto (HF Spaces free ya no soporta Streamlit) y pendiente descargar el CSV real de SENAMHI para el entrenamiento definitivo.
+Auditoría contra la rúbrica del PDF completada (14/07): se agregaron DBSCAN (Panel 1), MLP como 3er modelo con epochs/activation en vivo y métricas por clase (Panel 2), línea de tendencia (Panel 3) y **entrada manual de datos en el Panel 4**; checklist punto por punto en `docs/CHECKLIST_REQUISITOS.md`; hosting sigue pendiente (candidato: Streamlit Community Cloud).
 
 ## Resumen del proyecto
 
@@ -85,4 +85,5 @@ CSV oficial descargado (68.5 MB, 577,794 registros horarios, 2015→2024-05, 7 e
 | 2026-07-12 | Elegido el tema (calidad del aire, SENAMHI) y creada la propuesta inicial | `Propuesta_Proyecto_MineriaDeDatos.docx` |
 | 2026-07-13 | Explorada alternativa de recolección por API/scraping; descartado scraping de Google Maps por riesgo de ToS; validada la API WAQI con un token real (San Borja y 7 estaciones más); propuesta actualizada | `Propuesta_Proyecto_MineriaDeDatos_v2.docx` |
 | 2026-07-13 | Definida la arquitectura de implementación (Streamlit + Hugging Face Spaces + Supabase) y creada toda la documentación técnica | `ARQUITECTURA_Y_DISENO.md`, `CONTEXT_LOG.md`, `.env.example`, `.gitignore` |
-| 2026-07-14 | **Implementación completa del proyecto**: código de los 4 paneles + modelos + CRUD + tests; repo público creado y poblado (github.com/AxcelCH/calidad-aire-lima, 10 commits); token WAQI verificado en vivo y sacado del `.env.example` público; pipeline verificado end-to-end con datos sintéticos (CSV real pendiente
+| 2026-07-14 | **Implementación completa del proyecto**: código de los 4 paneles + modelos + CRUD + tests; repo público creado y poblado (github.com/AxcelCH/calidad-aire-lima, 10 commits); token WAQI verificado en vivo y sacado del `.env.example` público; pipeline verificado end-to-end con datos sintéticos (CSV real pendiente) | `app.py`, `src/`, `tests/`, `scripts/` |
+| 2026-07-14 | **Auditoría contra la rúbrica del PDF + brechas cerradas**: DBSCAN con comparación de silueta y detección de outliers (Panel 1); MLP como 3er modelo (tema 8 pide MLP vs RF vs XGBoost) con sliders de epochs/activation para la pregunta en vivo de redes neuronales; métricas por clase bajo las matrices de confusión; línea de tendencia MM-30d (Panel 3); **entrada manual de datos en el Panel 4** (modo manual del formulario: el usuario ingresa PM2.5/PM10/NO₂ de días previos + fecha, prellenado con el último dato histórico); 6 tests nuevos (anti-leakage de features y DBSCAN); checklist de cumplimiento | `app.py`, `src/models/classifier.py`, `src/models/clustering.py`, `tests/test_features_y_clustering.py`, `docs/CHECKLIST_REQUISITOS.md`, `README.md` |
