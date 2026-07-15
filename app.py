@@ -13,14 +13,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from sklearn.metrics import roc_curve
+
 from src.data.clean import aggregate_daily, clean_hourly
-from src.data.eca import ECA_PM25_24H, label_exceedance
+from src.data.eca import ECA_PM25_24H
 from src.db.supabase_client import ConsultasRepo
 from src.ingest.senamhi import load_raw
 from src.ingest.waqi import STATIONS_WAQI, get_live_reading
-from src.models.classifier import best_model_name, build_features, train_compare
-from src.models.clustering import cluster_profiles, elbow_and_silhouette, run_kmeans
-from src.models.forecast import evaluate_and_forecast, station_series
+from src.models.classifier import best_model_name, best_tree_name, build_features, train_compare
+from src.models.clustering import cluster_profiles, elbow_and_silhouette, run_dbscan, run_kmeans
+from src.models.forecast import evaluate_and_forecast, evaluate_and_forecast_arima, station_series
 
 logging.basicConfig(level=logging.INFO)
 
@@ -47,16 +49,36 @@ def cached_kmeans(daily: pd.DataFrame, k: int) -> pd.DataFrame:
     return run_kmeans(daily, k)
 
 
+@st.cache_data(show_spinner="Entrenando DBSCAN...")
+def cached_dbscan(daily: pd.DataFrame, eps: float, min_samples: int) -> tuple[pd.DataFrame, dict]:
+    return run_dbscan(daily, eps, min_samples)
+
+
 @st.cache_data(show_spinner="Construyendo features supervisadas...")
 def cached_features(daily: pd.DataFrame) -> pd.DataFrame:
     return build_features(daily)
 
 
-@st.cache_resource(show_spinner="Entrenando Random Forest y XGBoost...")
+@st.cache_data(show_spinner="Ajustando ARIMA (1,1,1)...")
+def cached_arima(daily: pd.DataFrame, station: str, horizon: int) -> dict | None:
+    serie = station_series(daily, station)
+    try:
+        return evaluate_and_forecast_arima(serie, horizon=horizon)
+    except Exception:
+        return None
+
+
+@st.cache_resource(show_spinner="Entrenando MLP, Random Forest y XGBoost...")
 def cached_training(
-    _features: pd.DataFrame, test_size: float, n_estimators: int, learning_rate: float, cache_key: str
+    _features: pd.DataFrame,
+    test_size: float,
+    n_estimators: int,
+    learning_rate: float,
+    mlp_epochs: int,
+    mlp_activation: str,
+    cache_key: str,
 ) -> dict:
-    return train_compare(_features, test_size, n_estimators, learning_rate)
+    return train_compare(_features, test_size, n_estimators, learning_rate, mlp_epochs, mlp_activation)
 
 
 @st.cache_resource
@@ -82,6 +104,40 @@ def panel_eda(hourly: pd.DataFrame, daily: pd.DataFrame, report: dict) -> None:
         use_container_width=True,
     )
 
+    st.subheader("Mapa de estaciones de monitoreo — Lima Metropolitana")
+    coord_cols = [c for c in ["latitud", "longitud"] if c in hourly.columns]
+    if len(coord_cols) == 2:
+        coords = (
+            hourly.dropna(subset=["latitud", "longitud"])
+            .assign(
+                latitud=lambda d: pd.to_numeric(d["latitud"], errors="coerce"),
+                longitud=lambda d: pd.to_numeric(d["longitud"], errors="coerce"),
+            )
+            .dropna(subset=["latitud", "longitud"])
+            .groupby("estacion")[["latitud", "longitud"]]
+            .first()
+            .reset_index()
+        )
+        avg_pm25 = (
+            daily.groupby("estacion")["pm25"].mean().round(1)
+            .reset_index().rename(columns={"pm25": "PM2.5 promedio (µg/m³)"})
+        )
+        map_df = coords.merge(avg_pm25, on="estacion").dropna()
+        if not map_df.empty:
+            fig_map = px.scatter_mapbox(
+                map_df, lat="latitud", lon="longitud",
+                color="PM2.5 promedio (µg/m³)", size="PM2.5 promedio (µg/m³)",
+                hover_name="estacion",
+                color_continuous_scale="RdYlGn_r",
+                range_color=[0, 80],
+                size_max=25, zoom=10,
+                mapbox_style="open-street-map",
+                title="PM2.5 promedio historico por estacion (ECA = 50 µg/m³)",
+            )
+            st.plotly_chart(fig_map, use_container_width=True)
+    else:
+        st.info("Coordenadas geograficas no disponibles en este dataset.")
+
     st.subheader("Distribuciones y outliers (regla 1.5·IQR)")
     pol = st.selectbox("Contaminante", ["pm25", "pm10", "no2"], key="eda_pol")
     col_a, col_b = st.columns(2)
@@ -95,6 +151,27 @@ def panel_eda(hourly: pd.DataFrame, daily: pd.DataFrame, report: dict) -> None:
             px.box(daily, x="estacion", y=pol, title=f"Boxplot de {pol.upper()} por estacion"),
             use_container_width=True,
         )
+
+    st.subheader("Outliers detectados (regla 1.5·IQR)")
+    outlier_rows = []
+    for cont in ["pm25", "pm10", "no2"]:
+        if cont not in daily.columns:
+            continue
+        serie = daily[cont].dropna()
+        q1, q3 = serie.quantile(0.25), serie.quantile(0.75)
+        iqr = q3 - q1
+        n_out = int(((serie < q1 - 1.5 * iqr) | (serie > q3 + 1.5 * iqr)).sum())
+        outlier_rows.append({
+            "Contaminante": cont.upper(),
+            "Q1": round(q1, 1),
+            "Q3": round(q3, 1),
+            "IQR": round(iqr, 1),
+            "Limite inferior": round(q1 - 1.5 * iqr, 1),
+            "Limite superior": round(q3 + 1.5 * iqr, 1),
+            "Outliers": n_out,
+            "% del total": f"{100 * n_out / len(serie):.1f}%",
+        })
+    st.dataframe(pd.DataFrame(outlier_rows), use_container_width=True, hide_index=True)
 
     st.subheader("Correlacion entre contaminantes")
     corr = daily[["pm10", "pm25", "no2"]].corr().round(2)
@@ -120,6 +197,85 @@ def panel_eda(hourly: pd.DataFrame, daily: pd.DataFrame, report: dict) -> None:
     st.caption("Perfil promedio de cada cluster:")
     st.dataframe(cluster_profiles(clusters), use_container_width=True)
 
+    st.subheader("DBSCAN — clusters de forma arbitraria y deteccion de outliers")
+    st.markdown(
+        "DBSCAN no exige fijar k: agrupa por densidad y marca como **outlier** (ruido) "
+        "los dias que no pertenecen a ninguna region densa. Se compara su silueta con la de K-means."
+    )
+    col_e, col_f = st.columns(2)
+    eps = col_e.slider("eps (radio de vecindad, datos escalados)", 0.2, 2.0, 0.7, 0.1)  # en vivo
+    min_samples = col_f.slider("min_samples", 5, 50, 15, 5)                              # en vivo
+    db_clusters, db_summary = cached_dbscan(daily, eps, min_samples)
+
+    sil_kmeans = float(elbow.loc[elbow["k"] == k, "silueta"].iloc[0])
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Clusters DBSCAN", db_summary["n_clusters"])
+    m2.metric("Outliers (ruido)", f"{db_summary['n_outliers']:,} ({db_summary['pct_outliers']}%)")
+    sil_db = db_summary["silueta"]
+    m3.metric("Silueta DBSCAN", "—" if pd.isna(sil_db) else f"{sil_db:.3f}")
+    m4.metric(f"Silueta K-means (k={k})", f"{sil_kmeans:.3f}")
+
+    st.plotly_chart(
+        px.scatter(
+            db_clusters, x="pm25", y="pm10", color="cluster", hover_data=["estacion", "no2"],
+            title=f"DBSCAN (eps={eps}, min_samples={min_samples}) — 'outlier' = dias atipicos",
+            category_orders={"cluster": sorted(db_clusters["cluster"].unique())},
+        ),
+        use_container_width=True,
+    )
+    if pd.isna(sil_db):
+        st.caption("Con estos parametros DBSCAN encontro menos de 2 clusters: sube eps o baja min_samples.")
+    else:
+        mejor_alg = "K-means" if sil_kmeans >= sil_db else "DBSCAN"
+        st.caption(
+            f"Comparacion de silueta (sin contar el ruido de DBSCAN): **{mejor_alg}** separa mejor. "
+            "DBSCAN aporta ademas la deteccion de dias-outlier que K-means fuerza dentro de un cluster."
+        )
+
+    st.subheader("Excedencias del ECA-PM2.5 por mes y estacion")
+    exc = daily.copy()
+    exc["mes"] = exc["fecha_dia"].dt.to_period("M").dt.to_timestamp()
+    exc["excede"] = (exc["pm25"] > ECA_PM25_24H).astype(int)
+    monthly_exc = (
+        exc.groupby(["estacion", "mes"])["excede"]
+        .mean()
+        .mul(100)
+        .round(1)
+        .reset_index()
+        .rename(columns={"excede": "pct_excede"})
+    )
+    fig_exc = px.line(
+        monthly_exc, x="mes", y="pct_excede", color="estacion", markers=True,
+        title="% de días por mes que superan el ECA de PM2.5 (50 µg/m³)",
+        labels={"mes": "Mes", "pct_excede": "% días con excedencia", "estacion": "Estación"},
+    )
+    fig_exc.add_hline(y=50, line_dash="dash", line_color="red", annotation_text="50% días")
+    st.plotly_chart(fig_exc, use_container_width=True)
+
+    st.subheader("Patron de contaminacion: hora del dia vs dia de la semana")
+    if "fecha_hora" in hourly.columns and "pm25" in hourly.columns:
+        heat_df = hourly.dropna(subset=["pm25"]).copy()
+        heat_df["hora"] = heat_df["fecha_hora"].dt.hour
+        heat_df["dia"] = heat_df["fecha_hora"].dt.dayofweek
+        pivot_heat = (
+            heat_df.groupby(["dia", "hora"])["pm25"]
+            .mean()
+            .round(1)
+            .unstack(level="hora")
+        )
+        _day_names = {0: "Lun", 1: "Mar", 2: "Mié", 3: "Jue", 4: "Vie", 5: "Sáb", 6: "Dom"}
+        pivot_heat.index = [_day_names.get(d, str(d)) for d in pivot_heat.index]
+        fig_heat = px.imshow(
+            pivot_heat,
+            title="PM2.5 promedio (µg/m³) por hora y dia de la semana — todas las estaciones",
+            labels={"x": "Hora del dia", "y": "Dia", "color": "PM2.5 (µg/m³)"},
+            color_continuous_scale="RdYlGn_r",
+            aspect="auto",
+            text_auto=".0f",
+        )
+        st.plotly_chart(fig_heat, use_container_width=True)
+        st.caption("Los patrones horarios reflejan los picos de trafico de Lima (7-9 am y 6-8 pm).")
+
 
 def panel_predictivo(daily: pd.DataFrame) -> None:
     st.header("Panel 2 — Modelo predictivo: excedencia del ECA de PM2.5")
@@ -133,6 +289,9 @@ def panel_predictivo(daily: pd.DataFrame) -> None:
     test_size = col1.slider("test_size", 0.1, 0.4, 0.2, 0.05)          # en vivo
     n_estimators = col2.slider("n_estimators", 50, 500, 200, 50)       # en vivo
     learning_rate = col3.slider("learning_rate (XGBoost)", 0.01, 0.5, 0.1, 0.01)  # en vivo
+    col4, col5 = st.columns(2)
+    mlp_epochs = col4.slider("epochs / max_iter (MLP)", 10, 500, 200, 10)              # en vivo
+    mlp_activation = col5.selectbox("activation (MLP)", ["relu", "logistic", "tanh"])  # en vivo
 
     features = cached_features(daily)
     balance = features["excede_pm25"].value_counts(normalize=True).round(3)
@@ -141,8 +300,8 @@ def panel_predictivo(daily: pd.DataFrame) -> None:
         f"{balance.get(1, 0):.1%} excede / {balance.get(0, 0):.1%} no excede"
     )
 
-    key = f"{test_size}-{n_estimators}-{learning_rate}"
-    results = cached_training(features, test_size, n_estimators, learning_rate, key)
+    key = f"{test_size}-{n_estimators}-{learning_rate}-{mlp_epochs}-{mlp_activation}"
+    results = cached_training(features, test_size, n_estimators, learning_rate, mlp_epochs, mlp_activation, key)
     if results["smote_aplicado"]:
         st.info(
             f"Clase minoritaria = {results['ratio_minoritaria_train']:.1%} (< 20%): "
@@ -155,7 +314,7 @@ def panel_predictivo(daily: pd.DataFrame) -> None:
     ]
     st.dataframe(pd.DataFrame(metric_rows).set_index("Modelo"), use_container_width=True)
 
-    cols = st.columns(2)
+    cols = st.columns(len(results["modelos"]))
     for col, (name, res) in zip(cols, results["modelos"].items()):
         with col:
             st.plotly_chart(
@@ -167,22 +326,74 @@ def panel_predictivo(daily: pd.DataFrame) -> None:
                 use_container_width=True,
             )
 
+    with st.expander("Metricas por clase (precision, recall, F1 de 'no excede' y 'excede')"):
+        for name, res in results["modelos"].items():
+            rep = pd.DataFrame(res["reporte_clases"]).T.loc[
+                ["no excede", "excede"], ["precision", "recall", "f1-score", "support"]
+            ].round(3)
+            st.markdown(f"**{name}** — accuracy global: {res['accuracy']:.3f}")
+            st.dataframe(rep, use_container_width=True)
+        st.caption(
+            "Para alertas de salud publica el error mas costoso es el falso negativo "
+            "(no avisar un dia que SI excede el ECA): por eso se vigila el recall de la clase 'excede'."
+        )
+
+    st.subheader("Curvas ROC — comparacion de modelos")
+    fig_roc = go.Figure()
+    for name, res in results["modelos"].items():
+        fpr, tpr, _ = roc_curve(results["y_test"], res["y_proba"])
+        fig_roc.add_scatter(x=fpr, y=tpr, mode="lines", name=f"{name} (AUC={res['roc_auc']:.3f})")
+    fig_roc.add_scatter(x=[0, 1], y=[0, 1], mode="lines", name="Clasificador aleatorio",
+                        line={"dash": "dot", "color": "gray"})
+    fig_roc.update_layout(
+        xaxis_title="Tasa de falsos positivos (FPR)",
+        yaxis_title="Tasa de verdaderos positivos (TPR)",
+        legend={"yanchor": "bottom", "y": 0.05, "xanchor": "right", "x": 0.95},
+    )
+    st.plotly_chart(fig_roc, use_container_width=True)
+
     best = best_model_name(results)
-    other = next(n for n in results["modelos"] if n != best)
+    others = ", ".join(
+        f"{n} (F1={results['modelos'][n]['f1']:.3f})" for n in results["modelos"] if n != best
+    )
     st.success(
         f"**Mejor modelo: {best}** — F1 = {results['modelos'][best]['f1']:.3f} y "
-        f"ROC-AUC = {results['modelos'][best]['roc_auc']:.3f}, frente a "
-        f"F1 = {results['modelos'][other]['f1']:.3f} de {other}. "
+        f"ROC-AUC = {results['modelos'][best]['roc_auc']:.3f}, frente a {others}. "
         "En este problema el costo de un falso negativo (no alertar un dia que si excede el ECA) "
         "es mayor que el de una falsa alarma, por eso se prioriza F1/recall de la clase 'excede'."
+    )
+
+    # SHAP TreeExplainer y feature_importances_ solo aplican a modelos de arboles
+    best_tree = best_tree_name(results)
+    if best != best_tree:
+        st.caption(
+            f"La interpretabilidad de abajo usa **{best_tree}** (mejor modelo de arboles): "
+            "el MLP es una caja negra sin feature_importances_ ni TreeExplainer."
+        )
+    model = results["modelos"][best_tree]["modelo"]
+    X_test = results["X_test"]
+
+    st.subheader(f"Importancia de variables — {best_tree}")
+    importances = (
+        pd.Series(model.feature_importances_, index=X_test.columns)
+        .sort_values(ascending=True)
+        .tail(15)
+    )
+    fig_fi = px.bar(
+        importances, orientation="h",
+        title=f"Top 15 variables mas importantes — {best_tree}",
+        labels={"value": "Importancia", "index": "Variable"},
+    )
+    st.plotly_chart(fig_fi, use_container_width=True)
+    st.caption(
+        "La importancia de arboles mide reduccion de impureza en nodos. "
+        "El SHAP (abajo) da el impacto real sobre cada prediccion individual."
     )
 
     st.subheader("Interpretabilidad con SHAP")
     with st.spinner("Calculando valores SHAP..."):
         import shap
 
-        model = results["modelos"][best]["modelo"]
-        X_test = results["X_test"]
         sample = X_test.iloc[:300]
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(sample)
@@ -204,9 +415,8 @@ def panel_predictivo(daily: pd.DataFrame) -> None:
         base_value = explainer.expected_value
         if isinstance(base_value, (list, tuple)) or getattr(base_value, "ndim", 0) == 1:
             base_value = base_value[1] if len(base_value) > 1 else base_value[0]
-        fig_force = plt.figure()
         shap.plots.force(base_value, shap_values[int(idx)], sample.iloc[int(idx)], matplotlib=True, show=False)
-        st.pyplot(fig_force, clear_figure=True)
+        st.pyplot(plt.gcf(), clear_figure=True)
 
 
 def panel_pronostico(daily: pd.DataFrame) -> None:
@@ -217,28 +427,65 @@ def panel_pronostico(daily: pd.DataFrame) -> None:
 
     serie = station_series(daily, station)
     try:
-        res = evaluate_and_forecast(serie, horizon=horizon)
+        res_hw = evaluate_and_forecast(serie, horizon=horizon)
     except ValueError as exc:
         st.warning(f"No se puede pronosticar esta estacion: {exc}")
         return
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("MAPE modelo", f"{res['mape_modelo']:.1f}%")
-    c2.metric("RMSE modelo", f"{res['rmse_modelo']:.1f}")
-    c3.metric("MAPE baseline (MM-7d)", f"{res['mape_baseline']:.1f}%")
-    c4.metric("RMSE baseline", f"{res['rmse_baseline']:.1f}")
+    res_arima = cached_arima(daily, station, horizon)
 
+    # --- Tabla de metricas comparativa ---
+    if res_arima is not None:
+        cols = st.columns(6)
+        cols[0].metric("MAPE Holt-Winters", f"{res_hw['mape_modelo']:.1f}%")
+        cols[1].metric("RMSE Holt-Winters", f"{res_hw['rmse_modelo']:.1f}")
+        cols[2].metric("MAPE ARIMA(1,1,1)", f"{res_arima['mape']:.1f}%")
+        cols[3].metric("RMSE ARIMA(1,1,1)", f"{res_arima['rmse']:.1f}")
+        cols[4].metric("MAPE baseline MM-7d", f"{res_hw['mape_baseline']:.1f}%")
+        cols[5].metric("RMSE baseline", f"{res_hw['rmse_baseline']:.1f}")
+    else:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("MAPE Holt-Winters", f"{res_hw['mape_modelo']:.1f}%")
+        c2.metric("RMSE Holt-Winters", f"{res_hw['rmse_modelo']:.1f}")
+        c3.metric("MAPE baseline MM-7d", f"{res_hw['mape_baseline']:.1f}%")
+        c4.metric("RMSE baseline", f"{res_hw['rmse_baseline']:.1f}")
+
+    # --- Grafico unificado ---
     fig = go.Figure()
-    hist = pd.concat([res["train"].iloc[-120:], res["test"]])
+    hist = pd.concat([res_hw["train"].iloc[-120:], res_hw["test"]])
     fig.add_scatter(x=hist.index, y=hist.values, name="Historico", line={"color": "#888"})
-    fig.add_scatter(x=res["test"].index, y=res["pred_test"].values, name="Prediccion (holdout)", line={"color": "#1f77b4"})
-    fig.add_scatter(x=res["test"].index, y=res["baseline_test"].values, name="Baseline MM-7d", line={"dash": "dot", "color": "#2ca02c"})
-    fig.add_scatter(x=res["forecast"].index, y=res["forecast"].values, name=f"Pronostico +{horizon}d", line={"color": "#d62728"})
+    trend = hist.rolling(30, min_periods=10).mean()
+    fig.add_scatter(x=trend.index, y=trend.values, name="Tendencia (media movil 30d)",
+                    line={"color": "#333", "width": 3})
+    fig.add_scatter(x=res_hw["test"].index, y=res_hw["pred_test"].values,
+                    name="Holt-Winters (holdout)", line={"color": "#1f77b4"})
+    fig.add_scatter(x=res_hw["test"].index, y=res_hw["baseline_test"].values,
+                    name="Baseline MM-7d", line={"dash": "dot", "color": "#2ca02c"})
+    if res_arima is not None:
+        fig.add_scatter(x=res_arima["test"].index, y=res_arima["pred_test"].values,
+                        name="ARIMA(1,1,1) (holdout)", line={"color": "#ff7f0e"})
+    fig.add_scatter(x=res_hw["forecast"].index, y=res_hw["forecast"].values,
+                    name=f"Pronostico HW +{horizon}d", line={"color": "#d62728"})
+    if res_arima is not None:
+        fig.add_scatter(x=res_arima["forecast"].index, y=res_arima["forecast"].values,
+                        name=f"Pronostico ARIMA +{horizon}d", line={"color": "#9467bd", "dash": "dash"})
     fig.add_hline(y=ECA_PM25_24H, line_dash="dash", annotation_text="ECA 50 µg/m³")
-    fig.update_layout(title=f"PM2.5 diario — {station} (Holt-Winters, estacionalidad semanal)", yaxis_title="µg/m³")
+    fig.update_layout(
+        title=f"PM2.5 diario — {station} (Holt-Winters vs ARIMA vs baseline)",
+        yaxis_title="µg/m³",
+    )
     st.plotly_chart(fig, use_container_width=True)
 
-    if res["mape_modelo"] < res["mape_baseline"]:
+    # --- Conclusion ---
+    if res_arima is not None:
+        mejor = "Holt-Winters" if res_hw["mape_modelo"] <= res_arima["mape"] else "ARIMA(1,1,1)"
+        st.success(
+            f"**Mejor modelo en holdout: {mejor}** — "
+            f"MAPE HW={res_hw['mape_modelo']:.1f}% · "
+            f"MAPE ARIMA={res_arima['mape']:.1f}% · "
+            f"MAPE baseline={res_hw['mape_baseline']:.1f}%"
+        )
+    elif res_hw["mape_modelo"] < res_hw["mape_baseline"]:
         st.success("El modelo Holt-Winters supera a la media movil de 7 dias en el holdout.")
     else:
         st.warning("La media movil de 7 dias es competitiva: la serie es muy persistente en este periodo.")
@@ -254,45 +501,129 @@ def panel_crud(daily: pd.DataFrame, features: pd.DataFrame, results: dict) -> No
 
     best = best_model_name(results)
     model = results["modelos"][best]["modelo"]
+    x_cols = list(results["X_test"].columns)
 
-    with st.form("form_consulta"):
-        st.markdown("**Nueva consulta**: predice si MAÑANA excedera el ECA de PM2.5 en la estacion elegida y contrasta con el dato en vivo de WAQI.")
-        station = st.selectbox("Estacion", sorted(set(daily["estacion"].unique()) & set(STATIONS_WAQI)))
-        submitted = st.form_submit_button("Predecir y guardar")
+    modo = st.radio(
+        "Modo de consulta",
+        ["Automatica (ultimo dia historico + WAQI en vivo)", "Manual (ingresa tus propios datos)"],
+        horizontal=True,
+    )
 
-    if submitted:
-        # Ultima fila de features disponible para la estacion elegida
-        est_col = f"est_{station}"
-        if est_col not in features.columns:
-            st.error("No hay features historicas para esa estacion.")
-            return
-        rows = features[features[est_col] == 1].sort_values("fecha_dia")
-        if rows.empty:
-            st.error("No hay datos suficientes de esa estacion.")
-            return
-        x_last = rows.drop(columns=["excede_pm25", "fecha_dia"]).astype(float).iloc[[-1]]
-        proba = float(model.predict_proba(x_last)[0, 1])
+    if modo.startswith("Automatica"):
+        with st.form("form_consulta"):
+            st.markdown("**Nueva consulta**: predice si MAÑANA excedera el ECA de PM2.5 en la estacion elegida y contrasta con el dato en vivo de WAQI.")
+            station = st.selectbox("Estacion", sorted(set(daily["estacion"].unique()) & set(STATIONS_WAQI)))
+            submitted = st.form_submit_button("Predecir y guardar")
 
-        live = get_live_reading(station)
-        valor_real = live["pm25_estimado_ugm3"] if live else None
-        ok = repo.guardar(
-            estacion=station,
-            inputs={"fecha_features": str(rows["fecha_dia"].iloc[-1].date()), "modelo": best},
-            valor_predicho=proba,
-            valor_real=valor_real,
-            fuente_en_vivo=live is not None,
-        )
-        c1, c2 = st.columns(2)
-        c1.metric("Prob. de exceder ECA (modelo)", f"{proba:.1%}")
-        if live:
-            c2.metric(
-                "PM2.5 en vivo (WAQI)",
-                f"{live['pm25_estimado_ugm3']} µg/m³",
-                help=f"AQI pm25={live['aqi_pm25']} medido {live['hora_medicion']} en {live['estacion_waqi']}",
+        if submitted:
+            # Ultima fila de features disponible para la estacion elegida
+            est_col = f"est_{station}"
+            if est_col not in features.columns:
+                st.error("No hay features historicas para esa estacion.")
+                return
+            rows = features[features[est_col] == 1].sort_values("fecha_dia")
+            if rows.empty:
+                st.error("No hay datos suficientes de esa estacion.")
+                return
+            x_last = rows.drop(columns=["excede_pm25", "fecha_dia"]).astype(float).iloc[[-1]]
+            proba = float(model.predict_proba(x_last)[0, 1])
+
+            live = get_live_reading(station)
+            valor_real = live["pm25_estimado_ugm3"] if live else None
+            ok = repo.guardar(
+                estacion=station,
+                inputs={"tipo": "automatica", "fecha_features": str(rows["fecha_dia"].iloc[-1].date()), "modelo": best},
+                valor_predicho=proba,
+                valor_real=valor_real,
+                fuente_en_vivo=live is not None,
             )
-        else:
-            c2.warning("API WAQI no respondio: se guardo solo la prediccion (fuente_en_vivo = false).")
-        st.success("Consulta guardada." if ok else "No se pudo guardar la consulta.")
+            c1, c2 = st.columns(2)
+            c1.metric("Prob. de exceder ECA (modelo)", f"{proba:.1%}")
+            if live:
+                c2.metric(
+                    "PM2.5 en vivo (WAQI)",
+                    f"{live['pm25_estimado_ugm3']} µg/m³",
+                    help=f"AQI pm25={live['aqi_pm25']} medido {live['hora_medicion']} en {live['estacion_waqi']}",
+                )
+            else:
+                c2.warning("API WAQI no respondio: se guardo solo la prediccion (fuente_en_vivo = false).")
+            st.success("Consulta guardada." if ok else "No se pudo guardar la consulta.")
+    else:
+        st.markdown(
+            "**Consulta manual**: ingresa las mediciones de los ultimos dias y el modelo "
+            "predice si el dia elegido excedera el ECA de PM2.5. Los campos vienen "
+            "prellenados con el ultimo dato historico de la estacion — puedes editarlos todos."
+        )
+        station_m = st.selectbox("Estacion", sorted(daily["estacion"].unique()), key="manual_station")
+
+        # Defaults desde la ultima fila historica de la estacion (si existe)
+        est_col_m = f"est_{station_m}"
+        defaults = {}
+        if est_col_m in features.columns:
+            rows_m = features[features[est_col_m] == 1].sort_values("fecha_dia")
+            if not rows_m.empty:
+                defaults = rows_m.iloc[-1].to_dict()
+
+        def _default(col: str, fallback: float, hi: float = 500.0) -> float:
+            val = defaults.get(col)
+            if val is None or pd.isna(val):
+                return fallback
+            return min(max(float(val), 0.0), hi)  # dentro del rango del number_input
+
+        with st.form("form_consulta_manual"):
+            fecha_obj = st.date_input("Fecha a predecir (define dia de semana y mes)")
+            st.markdown("**PM2.5 (µg/m³) de los dias previos**")
+            c1, c2, c3 = st.columns(3)
+            pm25_l1 = c1.number_input("PM2.5 ayer (lag 1)", 0.0, 500.0, _default("pm25_lag1", 40.0), 0.5)
+            pm25_l2 = c2.number_input("PM2.5 hace 2 dias", 0.0, 500.0, _default("pm25_lag2", 40.0), 0.5)
+            pm25_l3 = c3.number_input("PM2.5 hace 3 dias", 0.0, 500.0, _default("pm25_lag3", 40.0), 0.5)
+            st.markdown("**PM10 (µg/m³) de los dias previos**")
+            c4, c5, c6 = st.columns(3)
+            pm10_l1 = c4.number_input("PM10 ayer (lag 1)", 0.0, 800.0, _default("pm10_lag1", 80.0, 800.0), 0.5)
+            pm10_l2 = c5.number_input("PM10 hace 2 dias", 0.0, 800.0, _default("pm10_lag2", 80.0, 800.0), 0.5)
+            pm10_l3 = c6.number_input("PM10 hace 3 dias", 0.0, 800.0, _default("pm10_lag3", 80.0, 800.0), 0.5)
+            st.markdown("**NO₂ (µg/m³) de los dias previos**")
+            c7, c8, c9 = st.columns(3)
+            no2_l1 = c7.number_input("NO₂ ayer (lag 1)", 0.0, 400.0, _default("no2_lag1", 20.0, 400.0), 0.5)
+            no2_l2 = c8.number_input("NO₂ hace 2 dias", 0.0, 400.0, _default("no2_lag2", 20.0, 400.0), 0.5)
+            no2_l3 = c9.number_input("NO₂ hace 3 dias", 0.0, 400.0, _default("no2_lag3", 20.0, 400.0), 0.5)
+            media7 = st.number_input(
+                "PM2.5 promedio de los ultimos 7 dias (µg/m³)",
+                0.0, 500.0, _default("pm25_media7d", 40.0), 0.5,
+            )
+            submitted_m = st.form_submit_button("Predecir con datos manuales y guardar")
+
+        if submitted_m:
+            valores = {
+                "pm25_lag1": pm25_l1, "pm25_lag2": pm25_l2, "pm25_lag3": pm25_l3,
+                "pm10_lag1": pm10_l1, "pm10_lag2": pm10_l2, "pm10_lag3": pm10_l3,
+                "no2_lag1": no2_l1, "no2_lag2": no2_l2, "no2_lag3": no2_l3,
+                "pm25_media7d": media7,
+                "dia_semana": float(fecha_obj.weekday()),
+                "mes": float(fecha_obj.month),
+            }
+            x_manual = pd.DataFrame(0.0, index=[0], columns=x_cols)
+            for col, val in valores.items():
+                if col in x_manual.columns:
+                    x_manual.loc[0, col] = val
+            if est_col_m in x_manual.columns:
+                x_manual.loc[0, est_col_m] = 1.0
+
+            proba = float(model.predict_proba(x_manual)[0, 1])
+            veredicto = "EXCEDE" if proba >= 0.5 else "no excede"
+            ok = repo.guardar(
+                estacion=station_m,
+                inputs={"tipo": "manual", "fecha_objetivo": str(fecha_obj), "modelo": best, **valores},
+                valor_predicho=proba,
+                valor_real=None,
+                fuente_en_vivo=False,
+            )
+            c1, c2 = st.columns(2)
+            c1.metric("Prob. de exceder ECA (modelo)", f"{proba:.1%}")
+            c2.metric("Veredicto (umbral 0.5)", veredicto)
+            st.success(
+                f"Consulta manual guardada (modelo {best})." if ok else "No se pudo guardar la consulta."
+            )
 
     st.subheader("Consultas guardadas")
     df = repo.listar()
@@ -348,7 +679,7 @@ def main() -> None:
     with tab4:
         # Reusa el modelo ya entrenado con los valores por defecto de los sliders
         features = cached_features(daily)
-        results = cached_training(features, 0.2, 200, 0.1, "0.2-200-0.1")
+        results = cached_training(features, 0.2, 200, 0.1, 200, "relu", "0.2-200-0.1-200-relu")
         panel_crud(daily, features, results)
 
 
