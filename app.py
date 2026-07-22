@@ -438,32 +438,44 @@ def panel_predictivo(daily: pd.DataFrame) -> None:
     )
 
     st.subheader("Interpretabilidad con SHAP")
-    with st.spinner("Calculando valores SHAP..."):
-        import shap
+    try:
+        with st.spinner("Calculando valores SHAP..."):
+            import shap
 
-        sample = X_test.iloc[:300]
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(sample)
-        if isinstance(shap_values, list):  # RandomForest binario devuelve lista
-            shap_values = shap_values[1]
-        if getattr(shap_values, "ndim", 2) == 3:
-            shap_values = shap_values[:, :, 1]
+            sample = X_test.iloc[:300]
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(sample)
+            if isinstance(shap_values, list):  # RandomForest binario devuelve lista
+                shap_values = shap_values[1]
+            if getattr(shap_values, "ndim", 2) == 3:
+                shap_values = shap_values[:, :, 1]
 
-        fig_summary = plt.figure()
-        shap.summary_plot(shap_values, sample, show=False)
-        st.pyplot(fig_summary, clear_figure=True)
-        st.caption(
-            "Lectura global: los rezagos recientes de PM2.5 (dia anterior y media movil de 7 dias) "
-            "son los que mas empujan la prediccion hacia 'excede'; valores altos (rojo) aumentan el riesgo."
+            # No pre-crear plt.figure(): con el backend headless (Agg) de la nube
+            # provoca un desajuste de ejes en summary_plot. Se deja que SHAP cree su
+            # figura y se captura con gcf().
+            plt.close("all")
+            shap.summary_plot(shap_values, sample, show=False)
+            st.pyplot(plt.gcf(), clear_figure=True)
+            st.caption(
+                "Lectura global: los rezagos recientes de PM2.5 (dia anterior y media movil de 7 dias) "
+                "son los que mas empujan la prediccion hacia 'excede'; valores altos (rojo) aumentan el riesgo."
+            )
+
+            st.markdown("**Explicacion de un caso concreto (force plot):**")
+            idx = st.number_input("Fila del conjunto de test a explicar", 0, len(sample) - 1, 0)
+            base_value = explainer.expected_value
+            if isinstance(base_value, (list, tuple)) or getattr(base_value, "ndim", 0) == 1:
+                base_value = base_value[1] if len(base_value) > 1 else base_value[0]
+            plt.close("all")
+            shap.plots.force(base_value, shap_values[int(idx)], sample.iloc[int(idx)], matplotlib=True, show=False)
+            st.pyplot(plt.gcf(), clear_figure=True)
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("Fallo el render de SHAP")
+        st.warning(
+            "No se pudo renderizar la interpretabilidad SHAP en este entorno "
+            f"({type(exc).__name__}). La 'Importancia de variables' de arriba cubre "
+            "la interpretabilidad global del modelo."
         )
-
-        st.markdown("**Explicacion de un caso concreto (force plot):**")
-        idx = st.number_input("Fila del conjunto de test a explicar", 0, len(sample) - 1, 0)
-        base_value = explainer.expected_value
-        if isinstance(base_value, (list, tuple)) or getattr(base_value, "ndim", 0) == 1:
-            base_value = base_value[1] if len(base_value) > 1 else base_value[0]
-        shap.plots.force(base_value, shap_values[int(idx)], sample.iloc[int(idx)], matplotlib=True, show=False)
-        st.pyplot(plt.gcf(), clear_figure=True)
 
 
 def panel_pronostico(daily: pd.DataFrame) -> None:
@@ -745,6 +757,16 @@ def panel_crud(daily: pd.DataFrame, features: pd.DataFrame, results: dict) -> No
 
 
 # ----------------------------- Main -----------------------------
+def _render(nombre: str, fn, *args) -> None:
+    """Ejecuta un panel aislado: si falla, muestra el error solo en su pestana
+    en vez de cortar el script y tumbar los paneles siguientes."""
+    try:
+        fn(*args)
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("Fallo el panel %s", nombre)
+        st.error(f"Ocurrio un error en el panel '{nombre}': {exc}")
+
+
 def main() -> None:
     st.title("Calidad del aire en Lima Metropolitana")
     st.markdown(
@@ -766,16 +788,16 @@ def main() -> None:
         ["EDA + Clustering", "Predictivo", "Pronostico", "Consultas (CRUD)"]
     )
     with tab1:
-        panel_eda(hourly, daily, report)
+        _render("EDA + Clustering", panel_eda, hourly, daily, report)
     with tab2:
-        panel_predictivo(daily)
+        _render("Predictivo", panel_predictivo, daily)
     with tab3:
-        panel_pronostico(daily)
+        _render("Pronostico", panel_pronostico, daily)
     with tab4:
         # Reusa el modelo ya entrenado con los valores por defecto de los sliders
         features = cached_features(daily)
         results = cached_training(features, 0.2, 200, 0.1, 200, "relu", "0.2-200-0.1-200-relu")
-        panel_crud(daily, features, results)
+        _render("Consultas (CRUD)", panel_crud, daily, features, results)
 
 
 if __name__ == "__main__":
