@@ -746,13 +746,19 @@ def panel_crud(daily: pd.DataFrame, features: pd.DataFrame, results: dict) -> No
         edit_id = st.selectbox("ID a editar", df["id"].tolist(), key="edit_id")
         nueva_obs = st.text_input("Observacion")
         if st.button("Guardar observacion"):
-            st.success("Observacion actualizada.") if repo.editar_observacion(int(edit_id), nueva_obs) else st.error("Fallo la edicion.")
+            if repo.editar_observacion(int(edit_id), nueva_obs):
+                st.success("Observacion actualizada.")
+            else:
+                st.error("Fallo la edicion.")
             st.rerun()
     with col_d:
         st.markdown("**Eliminar** (borrado logico)")
         del_id = st.selectbox("ID a eliminar", df["id"].tolist(), key="del_id")
         if st.button("Eliminar consulta"):
-            st.success("Consulta marcada como eliminada.") if repo.eliminar(int(del_id)) else st.error("Fallo la eliminacion.")
+            if repo.eliminar(int(del_id)):
+                st.success("Consulta marcada como eliminada.")
+            else:
+                st.error("Fallo la eliminacion.")
             st.rerun()
 
 
