@@ -31,7 +31,15 @@ def download_csv(url: str = SENAMHI_CSV_URL, timeout: int = 300) -> Path:
     """Descarga el CSV oficial y lo guarda con fecha en el nombre."""
     target = DATA_CACHE_DIR / f"senamhi_aire_lima_{dt.date.today():%Y%m%d}.csv"
     logger.info("Descargando CSV de SENAMHI desde %s", url)
-    headers = {"User-Agent": "Mozilla/5.0 (proyecto academico UNMSM - mineria de datos)"}
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/csv,application/octet-stream,*/*",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Referer": "https://www.datosabiertos.gob.pe/dataset/monitoreo-de-los-contaminantes-del-aire-en-lima-metropolitana-servicio-nacional-de",
+    }
     with requests.get(url, headers=headers, stream=True, timeout=timeout) as resp:
         resp.raise_for_status()
         with open(target, "wb") as fh:
