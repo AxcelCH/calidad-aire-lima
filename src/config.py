@@ -33,6 +33,15 @@ DEFAULT_SENAMHI_CSV_URL = (
     "%20del%20Per%C3%BA%20-%20SENAMHI%5D_1.csv"
 )
 
+# Espejo del CSV en un Release de este repo. El portal gob.pe bloquea las IPs
+# de proveedores cloud (403 desde Streamlit Cloud/GCP), asi que se usa como
+# fuente de respaldo cuando la descarga oficial falla. Mismo archivo, sha256
+# 896ae8a1...c40d4 verificado.
+SENAMHI_CSV_MIRROR_URL = (
+    "https://github.com/AxcelCH/calidad-aire-lima/releases/download/"
+    "data-senamhi-v1/senamhi_aire_lima_20260714.csv"
+)
+
 WAQI_API_TOKEN: str = _secret_or_env("WAQI_API_TOKEN")
 SUPABASE_URL: str = _secret_or_env("SUPABASE_URL")
 SUPABASE_ANON_KEY: str = _secret_or_env("SUPABASE_ANON_KEY")
