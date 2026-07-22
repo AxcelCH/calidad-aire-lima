@@ -13,11 +13,24 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
 
 
+# Rutas donde Streamlit busca el secrets.toml (local del proyecto, home del usuario
+# y el mount de Streamlit Community Cloud). Solo se consulta st.secrets si alguno
+# existe: tocar st.secrets sin archivo emite un error a la UI *durante el import*,
+# lo que ademas rompe el orden y hace fallar st.set_page_config().
+_SECRETS_PATHS = (
+    ROOT_DIR / ".streamlit" / "secrets.toml",
+    Path.home() / ".streamlit" / "secrets.toml",
+    Path("/mount/src") / ROOT_DIR.name / ".streamlit" / "secrets.toml",
+)
+
+
 def _secret_or_env(key: str, default: str = "") -> str:
     """os.getenv primero (.env local); si no hay valor, intenta st.secrets (Streamlit Cloud)."""
     value = os.getenv(key, "")
     if value:
         return value
+    if not any(p.exists() for p in _SECRETS_PATHS):
+        return default
     try:
         import streamlit as st
 
