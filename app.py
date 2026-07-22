@@ -26,7 +26,24 @@ from src.models.forecast import evaluate_and_forecast, evaluate_and_forecast_ari
 
 logging.basicConfig(level=logging.INFO)
 
-st.set_page_config(page_title="Calidad del Aire — Lima", page_icon="🌫️", layout="wide")
+st.set_page_config(page_title="Calidad del Aire — Lima", layout="wide")
+
+# Paleta validada (colorblind-safe, orden categorico fijo) compartida por todos los graficos.
+CATEGORICAL_COLORS = [
+    "#2a78d6",  # 1 blue
+    "#1baf7a",  # 2 aqua
+    "#eda100",  # 3 yellow
+    "#008300",  # 4 green
+    "#4a3aa7",  # 5 violet
+    "#e34948",  # 6 red
+    "#e87ba4",  # 7 magenta
+    "#eb6834",  # 8 orange
+]
+SEQUENTIAL_BLUE = ["#cde2fb", "#86b6ef", "#3987e5", "#2a78d6", "#1c5cab", "#0d366b"]
+DIVERGING_SCALE = [[0.0, "#e34948"], [0.5, "#f0efec"], [1.0, "#2a78d6"]]
+COLOR_MUTED = "#898781"
+COLOR_SECONDARY = "#52514e"
+COLOR_CRITICAL = "#d03b3b"
 
 
 # ----------------------------- Carga cacheada -----------------------------
@@ -91,10 +108,18 @@ def panel_eda(hourly: pd.DataFrame, daily: pd.DataFrame, report: dict) -> None:
     st.header("Panel 1 — Analisis exploratorio y clustering")
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Registros horarios validos", f"{report['registros_validos']:,}")
-    c2.metric("% descartado (nulos)", f"{report['pct_descartado']}%")
-    c3.metric("Estaciones", len(report["estaciones"]))
-    c4.metric("Cobertura", f"{report['fecha_min']} → {report['fecha_max']}")
+    for col, label, value in zip(
+        (c1, c2, c3, c4),
+        ("Registros horarios validos", "% descartado (nulos)", "Estaciones", "Cobertura"),
+        (
+            f"{report['registros_validos']:,}",
+            f"{report['pct_descartado']}%",
+            len(report["estaciones"]),
+            f"{report['fecha_min']} → {report['fecha_max']}",
+        ),
+    ):
+        with col.container(border=True):
+            st.metric(label, value)
 
     st.subheader("Estadisticas descriptivas (promedios diarios)")
     st.dataframe(
@@ -143,12 +168,18 @@ def panel_eda(hourly: pd.DataFrame, daily: pd.DataFrame, report: dict) -> None:
     col_a, col_b = st.columns(2)
     with col_a:
         st.plotly_chart(
-            px.histogram(daily, x=pol, nbins=60, title=f"Histograma de {pol.upper()} (diario)"),
+            px.histogram(
+                daily, x=pol, nbins=60, title=f"Histograma de {pol.upper()} (diario)",
+                color_discrete_sequence=[CATEGORICAL_COLORS[0]],
+            ),
             use_container_width=True,
         )
     with col_b:
         st.plotly_chart(
-            px.box(daily, x="estacion", y=pol, title=f"Boxplot de {pol.upper()} por estacion"),
+            px.box(
+                daily, x="estacion", y=pol, title=f"Boxplot de {pol.upper()} por estacion",
+                color_discrete_sequence=[CATEGORICAL_COLORS[0]],
+            ),
             use_container_width=True,
         )
 
@@ -175,15 +206,30 @@ def panel_eda(hourly: pd.DataFrame, daily: pd.DataFrame, report: dict) -> None:
 
     st.subheader("Correlacion entre contaminantes")
     corr = daily[["pm10", "pm25", "no2"]].corr().round(2)
-    st.plotly_chart(px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", zmin=-1, zmax=1), use_container_width=True)
+    st.plotly_chart(
+        px.imshow(corr, text_auto=True, color_continuous_scale=DIVERGING_SCALE, zmin=-1, zmax=1),
+        use_container_width=True,
+    )
 
     st.subheader("Clustering K-means")
     elbow = cached_elbow(daily)
     col_c, col_d = st.columns(2)
     with col_c:
-        st.plotly_chart(px.line(elbow, x="k", y="inercia", markers=True, title="Metodo del codo"), use_container_width=True)
+        st.plotly_chart(
+            px.line(
+                elbow, x="k", y="inercia", markers=True, title="Metodo del codo",
+                color_discrete_sequence=[CATEGORICAL_COLORS[0]],
+            ),
+            use_container_width=True,
+        )
     with col_d:
-        st.plotly_chart(px.line(elbow, x="k", y="silueta", markers=True, title="Coeficiente de silueta"), use_container_width=True)
+        st.plotly_chart(
+            px.line(
+                elbow, x="k", y="silueta", markers=True, title="Coeficiente de silueta",
+                color_discrete_sequence=[CATEGORICAL_COLORS[1]],
+            ),
+            use_container_width=True,
+        )
 
     k = st.slider("Numero de clusters (k)", 2, 8, 3, key="k_clusters")  # hiperparametro en vivo
     clusters = cached_kmeans(daily, k)
@@ -191,6 +237,7 @@ def panel_eda(hourly: pd.DataFrame, daily: pd.DataFrame, report: dict) -> None:
         px.scatter(
             clusters, x="pm25", y="pm10", color="cluster", hover_data=["estacion", "no2"],
             title=f"Clusters de dias segun contaminacion (k={k})",
+            color_discrete_sequence=CATEGORICAL_COLORS,
         ),
         use_container_width=True,
     )
@@ -319,7 +366,7 @@ def panel_predictivo(daily: pd.DataFrame) -> None:
         with col:
             st.plotly_chart(
                 px.imshow(
-                    res["matriz_confusion"], text_auto=True, color_continuous_scale="Blues",
+                    res["matriz_confusion"], text_auto=True, color_continuous_scale=SEQUENTIAL_BLUE,
                     x=["Pred: no excede", "Pred: excede"], y=["Real: no excede", "Real: excede"],
                     title=f"Matriz de confusion — {name}",
                 ),
@@ -434,45 +481,83 @@ def panel_pronostico(daily: pd.DataFrame) -> None:
 
     res_arima = cached_arima(daily, station, horizon)
 
-    # --- Tabla de metricas comparativa ---
+    # --- Tarjetas de metricas ---
     if res_arima is not None:
+        labels = [
+            "MAPE Holt-Winters", "RMSE Holt-Winters", "MAPE ARIMA(1,1,1)", "RMSE ARIMA(1,1,1)",
+            "MAPE baseline MM-7d", "RMSE baseline",
+        ]
+        values = [
+            f"{res_hw['mape_modelo']:.1f}%", f"{res_hw['rmse_modelo']:.1f}",
+            f"{res_arima['mape']:.1f}%", f"{res_arima['rmse']:.1f}",
+            f"{res_hw['mape_baseline']:.1f}%", f"{res_hw['rmse_baseline']:.1f}",
+        ]
         cols = st.columns(6)
-        cols[0].metric("MAPE Holt-Winters", f"{res_hw['mape_modelo']:.1f}%")
-        cols[1].metric("RMSE Holt-Winters", f"{res_hw['rmse_modelo']:.1f}")
-        cols[2].metric("MAPE ARIMA(1,1,1)", f"{res_arima['mape']:.1f}%")
-        cols[3].metric("RMSE ARIMA(1,1,1)", f"{res_arima['rmse']:.1f}")
-        cols[4].metric("MAPE baseline MM-7d", f"{res_hw['mape_baseline']:.1f}%")
-        cols[5].metric("RMSE baseline", f"{res_hw['rmse_baseline']:.1f}")
     else:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("MAPE Holt-Winters", f"{res_hw['mape_modelo']:.1f}%")
-        c2.metric("RMSE Holt-Winters", f"{res_hw['rmse_modelo']:.1f}")
-        c3.metric("MAPE baseline MM-7d", f"{res_hw['mape_baseline']:.1f}%")
-        c4.metric("RMSE baseline", f"{res_hw['rmse_baseline']:.1f}")
+        labels = ["MAPE Holt-Winters", "RMSE Holt-Winters", "MAPE baseline MM-7d", "RMSE baseline"]
+        values = [
+            f"{res_hw['mape_modelo']:.1f}%", f"{res_hw['rmse_modelo']:.1f}",
+            f"{res_hw['mape_baseline']:.1f}%", f"{res_hw['rmse_baseline']:.1f}",
+        ]
+        cols = st.columns(4)
+    for col, label, value in zip(cols, labels, values):
+        with col.container(border=True):
+            st.metric(label, value)
 
     # --- Grafico unificado ---
-    fig = go.Figure()
     hist = pd.concat([res_hw["train"].iloc[-120:], res_hw["test"]])
-    fig.add_scatter(x=hist.index, y=hist.values, name="Historico", line={"color": "#888"})
     trend = hist.rolling(30, min_periods=10).mean()
-    fig.add_scatter(x=trend.index, y=trend.values, name="Tendencia (media movil 30d)",
-                    line={"color": "#333", "width": 3})
-    fig.add_scatter(x=res_hw["test"].index, y=res_hw["pred_test"].values,
-                    name="Holt-Winters (holdout)", line={"color": "#1f77b4"})
-    fig.add_scatter(x=res_hw["test"].index, y=res_hw["baseline_test"].values,
-                    name="Baseline MM-7d", line={"dash": "dot", "color": "#2ca02c"})
+    # Ancla cada pronostico al ultimo dato conocido para que la linea no quede flotando.
+    forecast_hw_plot = pd.concat([res_hw["test"].iloc[[-1]], res_hw["forecast"]])
+
+    fig = go.Figure()
+    fig.add_scatter(
+        x=hist.index, y=hist.values, name="Historico", mode="lines",
+        line={"color": COLOR_MUTED, "width": 2},
+    )
+    fig.add_scatter(
+        x=trend.index, y=trend.values, name="Tendencia (media movil 30d)", mode="lines",
+        line={"color": COLOR_SECONDARY, "width": 2},
+    )
+    fig.add_scatter(
+        x=res_hw["test"].index, y=res_hw["pred_test"].values, name="Holt-Winters (holdout)", mode="lines",
+        line={"color": CATEGORICAL_COLORS[0], "width": 2},
+    )
+    fig.add_scatter(
+        x=res_hw["test"].index, y=res_hw["baseline_test"].values, name="Baseline MM-7d", mode="lines",
+        line={"color": CATEGORICAL_COLORS[1], "width": 2, "dash": "dot"},
+    )
     if res_arima is not None:
-        fig.add_scatter(x=res_arima["test"].index, y=res_arima["pred_test"].values,
-                        name="ARIMA(1,1,1) (holdout)", line={"color": "#ff7f0e"})
-    fig.add_scatter(x=res_hw["forecast"].index, y=res_hw["forecast"].values,
-                    name=f"Pronostico HW +{horizon}d", line={"color": "#d62728"})
+        forecast_arima_plot = pd.concat([res_arima["test"].iloc[[-1]], res_arima["forecast"]])
+        fig.add_scatter(
+            x=res_arima["test"].index, y=res_arima["pred_test"].values, name="ARIMA(1,1,1) (holdout)",
+            mode="lines", line={"color": CATEGORICAL_COLORS[4], "width": 2},
+        )
+    fig.add_scatter(
+        x=forecast_hw_plot.index, y=forecast_hw_plot.values, name=f"Pronostico HW +{horizon}d",
+        mode="lines+markers", line={"color": CATEGORICAL_COLORS[2], "width": 2}, marker={"size": 8},
+    )
     if res_arima is not None:
-        fig.add_scatter(x=res_arima["forecast"].index, y=res_arima["forecast"].values,
-                        name=f"Pronostico ARIMA +{horizon}d", line={"color": "#9467bd", "dash": "dash"})
-    fig.add_hline(y=ECA_PM25_24H, line_dash="dash", annotation_text="ECA 50 µg/m³")
+        fig.add_scatter(
+            x=forecast_arima_plot.index, y=forecast_arima_plot.values, name=f"Pronostico ARIMA +{horizon}d",
+            mode="lines+markers", line={"color": CATEGORICAL_COLORS[3], "width": 2, "dash": "dash"},
+            marker={"size": 8},
+        )
+    fig.add_vline(x=res_hw["test"].index[-1], line_dash="dot", line_color=COLOR_MUTED)
+    fig.add_annotation(
+        x=res_hw["test"].index[-1], y=1, yref="paper", yanchor="bottom",
+        text="Hoy", showarrow=False, font={"color": COLOR_MUTED, "size": 12},
+    )
+    fig.add_hline(
+        y=ECA_PM25_24H, line_dash="dash", line_color=COLOR_CRITICAL,
+        annotation_text=f"ECA {ECA_PM25_24H} µg/m³", annotation_position="bottom right",
+    )
     fig.update_layout(
         title=f"PM2.5 diario — {station} (Holt-Winters vs ARIMA vs baseline)",
         yaxis_title="µg/m³",
+        xaxis_title=None,
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.05, "x": 0},
+        margin={"t": 80},
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -489,6 +574,12 @@ def panel_pronostico(daily: pd.DataFrame) -> None:
         st.success("El modelo Holt-Winters supera a la media movil de 7 dias en el holdout.")
     else:
         st.warning("La media movil de 7 dias es competitiva: la serie es muy persistente en este periodo.")
+
+    with st.expander("Ver pronostico en tabla"):
+        tabla = pd.DataFrame({"fecha": res_hw["forecast"].index.date, "pronostico_hw_ugm3": res_hw["forecast"].values.round(1)})
+        if res_arima is not None:
+            tabla["pronostico_arima_ugm3"] = res_arima["forecast"].values.round(1)
+        st.dataframe(tabla, use_container_width=True, hide_index=True)
 
 
 def panel_crud(daily: pd.DataFrame, features: pd.DataFrame, results: dict) -> None:
@@ -529,22 +620,26 @@ def panel_crud(daily: pd.DataFrame, features: pd.DataFrame, results: dict) -> No
             proba = float(model.predict_proba(x_last)[0, 1])
 
             live = get_live_reading(station)
-            valor_real = live["pm25_estimado_ugm3"] if live else None
+            # WAQI puede responder OK sin traer PM2.5 (esa estacion solo reporta otros
+            # contaminantes en ese momento): valor_real depende del dato, no de la respuesta.
+            valor_real = live.get("pm25_estimado_ugm3") if live else None
             ok = repo.guardar(
                 estacion=station,
                 inputs={"tipo": "automatica", "fecha_features": str(rows["fecha_dia"].iloc[-1].date()), "modelo": best},
                 valor_predicho=proba,
                 valor_real=valor_real,
-                fuente_en_vivo=live is not None,
+                fuente_en_vivo=valor_real is not None,
             )
             c1, c2 = st.columns(2)
             c1.metric("Prob. de exceder ECA (modelo)", f"{proba:.1%}")
-            if live:
+            if valor_real is not None:
                 c2.metric(
                     "PM2.5 en vivo (WAQI)",
-                    f"{live['pm25_estimado_ugm3']} µg/m³",
+                    f"{valor_real} µg/m³",
                     help=f"AQI pm25={live['aqi_pm25']} medido {live['hora_medicion']} en {live['estacion_waqi']}",
                 )
+            elif live:
+                c2.warning("WAQI no reporta PM2.5 para esta estacion en este momento: se guardo solo la prediccion.")
             else:
                 c2.warning("API WAQI no respondio: se guardo solo la prediccion (fuente_en_vivo = false).")
             st.success("Consulta guardada." if ok else "No se pudo guardar la consulta.")
@@ -651,7 +746,7 @@ def panel_crud(daily: pd.DataFrame, features: pd.DataFrame, results: dict) -> No
 
 # ----------------------------- Main -----------------------------
 def main() -> None:
-    st.title("🌫️ Calidad del aire en Lima Metropolitana")
+    st.title("Calidad del aire en Lima Metropolitana")
     st.markdown(
         "Proyecto de Minería de Datos (UNMSM-FISI, 2026-I). Datos reales: "
         "[SENAMHI / datosabiertos.gob.pe](https://www.datosabiertos.gob.pe/dataset/monitoreo-de-los-contaminantes-del-aire-en-lima-metropolitana-servicio-nacional-de)"
@@ -668,7 +763,7 @@ def main() -> None:
         st.stop()
 
     tab1, tab2, tab3, tab4 = st.tabs(
-        ["📊 EDA + Clustering", "🤖 Predictivo", "📈 Pronostico", "🗂️ Consultas (CRUD)"]
+        ["EDA + Clustering", "Predictivo", "Pronostico", "Consultas (CRUD)"]
     )
     with tab1:
         panel_eda(hourly, daily, report)

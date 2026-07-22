@@ -14,7 +14,7 @@ license: mit
 
 Proyecto del curso **Minería de Datos 2026-I (UNMSM — FISI)**. Dashboard analítico de 4 paneles construido con **datos reales del estado peruano**: el histórico horario de contaminantes de **SENAMHI** ([datosabiertos.gob.pe](https://www.datosabiertos.gob.pe/dataset/monitoreo-de-los-contaminantes-del-aire-en-lima-metropolitana-servicio-nacional-de), licencia ODC-BY) y el dato en vivo de la **API WAQI** ([aqicn.org](https://aqicn.org)).
 
-**Estado del despliegue:** hosting en definición. La app corre local con `streamlit run app.py`; el candidato para hosting gratuito es [Streamlit Community Cloud](https://share.streamlit.io) (conectar este repo → main file `app.py` → cargar secrets). Nota: el free tier de HF Spaces ya no soporta el SDK Streamlit (jul-2026).
+**Estado del despliegue:** hosting en [Streamlit Community Cloud](https://share.streamlit.io) (gratis, deploy directo desde GitHub). Nota: el free tier de HF Spaces ya no soporta el SDK Streamlit (jul-2026), por eso se descartó.
 
 ## Los 4 paneles
 
@@ -73,6 +73,22 @@ Fuentes (SENAMHI CSV + API WAQI) → src/ingest → src/data (limpieza + reglas 
 ## Variables de entorno
 
 Ver [`.env.example`](.env.example). En Hugging Face Spaces se cargan en *Settings → Variables and secrets* con los mismos nombres.
+
+## Despliegue en Streamlit Community Cloud
+
+1. Entra a [share.streamlit.io](https://share.streamlit.io) e inicia sesión con la cuenta de GitHub dueña del repo (`AxcelCH`).
+2. **New app** → selecciona el repo `AxcelCH/calidad-aire-lima` → **branch: `angela`** → **main file: `app.py`**.
+3. En *Advanced settings*, confirma la versión de Python 3.11 (el repo ya incluye [`runtime.txt`](runtime.txt) para fijarla; `pandas`/`numpy` en las versiones pineadas no tienen wheels para Python 3.13+).
+4. En *Secrets*, pega en formato TOML los mismos valores de tu `.env` local:
+
+   ```toml
+   WAQI_API_TOKEN = "..."
+   SUPABASE_URL = "..."
+   SUPABASE_ANON_KEY = "..."
+   ```
+
+   Sin esto, el CRUD sigue funcionando con SQLite local y el Panel 4 sin dato en vivo (degradación controlada).
+5. **Deploy**. La primera corrida descarga el CSV de SENAMHI (~65 MB), tarda más que las siguientes.
 
 ## Equipo
 

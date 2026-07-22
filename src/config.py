@@ -1,7 +1,8 @@
 """Configuracion central del proyecto.
 
-Lee las variables de entorno una sola vez (desde .env en local o desde los
-Secrets de Hugging Face Spaces en produccion) y define rutas compartidas.
+Lee las variables de entorno una sola vez (desde .env en local, o desde los
+Secrets de Streamlit Community Cloud / Hugging Face Spaces en produccion,
+donde no existe un archivo .env) y define rutas compartidas.
 """
 import os
 from pathlib import Path
@@ -11,6 +12,20 @@ from dotenv import load_dotenv
 ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
 
+
+def _secret_or_env(key: str, default: str = "") -> str:
+    """os.getenv primero (.env local); si no hay valor, intenta st.secrets (Streamlit Cloud)."""
+    value = os.getenv(key, "")
+    if value:
+        return value
+    try:
+        import streamlit as st
+
+        return str(st.secrets.get(key, default))
+    except Exception:
+        return default
+
+
 DEFAULT_SENAMHI_CSV_URL = (
     "https://www.datosabiertos.gob.pe/sites/default/files/"
     "Monitoreo%20de%20los%20contaminantes%20del%20aire%20en%20Lima%20Metropolitana"
@@ -18,11 +33,11 @@ DEFAULT_SENAMHI_CSV_URL = (
     "%20del%20Per%C3%BA%20-%20SENAMHI%5D_1.csv"
 )
 
-WAQI_API_TOKEN: str = os.getenv("WAQI_API_TOKEN", "")
-SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
-SENAMHI_CSV_URL: str = os.getenv("SENAMHI_CSV_URL", DEFAULT_SENAMHI_CSV_URL)
-APP_ENV: str = os.getenv("APP_ENV", "development")
+WAQI_API_TOKEN: str = _secret_or_env("WAQI_API_TOKEN")
+SUPABASE_URL: str = _secret_or_env("SUPABASE_URL")
+SUPABASE_ANON_KEY: str = _secret_or_env("SUPABASE_ANON_KEY")
+SENAMHI_CSV_URL: str = _secret_or_env("SENAMHI_CSV_URL", DEFAULT_SENAMHI_CSV_URL)
+APP_ENV: str = _secret_or_env("APP_ENV", "development")
 
 DATA_CACHE_DIR = ROOT_DIR / "data_cache"
 MODELS_CACHE_DIR = ROOT_DIR / "models_cache"
