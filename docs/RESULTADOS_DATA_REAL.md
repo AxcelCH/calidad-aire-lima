@@ -35,10 +35,11 @@ Dataset supervisado: 8,687 filas · clase "excede" = **3.6%** (fuerte desbalance
 |---|---|---|---|---|---|
 | **Random Forest** | 0.9522 | 0.3837 | **0.5238** | **0.4430** | **0.9386** |
 | XGBoost | 0.9574 | 0.3962 | 0.3333 | 0.3621 | 0.9202 |
+| MLP (64,32; relu; StandardScaler) | 0.9436 | 0.3034 | 0.4286 | 0.3553 | 0.8866 |
 
-Matriz de confusión RF (test): TN=1622, FP=53, FN=30, TP=33.
+Matriz de confusión RF (test): TN=1622, FP=53, FN=30, TP=33. MLP (test): TN=1613, FP=62, FN=36, TP=27.
 
-**Conclusión:** Random Forest es el mejor modelo — con 3.6% de prevalencia, el recall de la clase "excede" es la métrica crítica (no alertar un día que sí excede cuesta más que una falsa alarma) y RF detecta el 52% de las excedencias vs 33% de XGBoost, con mejor F1 y AUC. La accuracy es engañosa por el desbalance (un modelo que nunca alerta tendría ~96%).
+**Conclusión:** Random Forest es el mejor modelo de los 3 que sugiere el tema 8 (MLP vs RF vs XGBoost) — con 3.6% de prevalencia, el recall de la clase "excede" es la métrica crítica (no alertar un día que sí excede cuesta más que una falsa alarma) y RF detecta el 52% de las excedencias vs 33% de XGBoost y 43% del MLP, con mejor F1 y AUC. La red neuronal no aporta ventaja aquí: con features tabulares de rezagos, los ensembles de árboles capturan las no-linealidades sin necesitar escalado ni tuning fino. La accuracy es engañosa por el desbalance (un modelo que nunca alerta tendría ~96%).
 
 ## 4. Pronóstico PM2.5 diario (Holt-Winters vs media móvil 7d, holdout 30 días)
 

@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from src.config import DATA_CACHE_DIR, SENAMHI_CSV_URL
+from src.config import DATA_CACHE_DIR, SENAMHI_CSV_MIRROR_URL, SENAMHI_CSV_URL
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +27,38 @@ def _find_cached_csv() -> Path | None:
     return candidates[-1] if candidates else None
 
 
-def download_csv(url: str = SENAMHI_CSV_URL, timeout: int = 300) -> Path:
-    """Descarga el CSV oficial y lo guarda con fecha en el nombre."""
-    target = DATA_CACHE_DIR / f"senamhi_aire_lima_{dt.date.today():%Y%m%d}.csv"
-    logger.info("Descargando CSV de SENAMHI desde %s", url)
-    headers = {"User-Agent": "Mozilla/5.0 (proyecto academico UNMSM - mineria de datos)"}
+def _download_from(url: str, target: Path, timeout: int) -> None:
+    """Descarga `url` a `target` en streaming. Lanza si el servidor responde error."""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/csv,application/octet-stream,*/*",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Referer": "https://www.datosabiertos.gob.pe/dataset/monitoreo-de-los-contaminantes-del-aire-en-lima-metropolitana-servicio-nacional-de",
+    }
     with requests.get(url, headers=headers, stream=True, timeout=timeout) as resp:
         resp.raise_for_status()
         with open(target, "wb") as fh:
             for chunk in resp.iter_content(chunk_size=1 << 20):
                 fh.write(chunk)
+
+
+def download_csv(url: str = SENAMHI_CSV_URL, timeout: int = 300) -> Path:
+    """Descarga el CSV y lo guarda con fecha en el nombre.
+
+    Intenta primero la fuente oficial de SENAMHI; si falla (el portal gob.pe
+    bloquea las IPs de proveedores cloud con un 403, p.ej. desde Streamlit
+    Cloud), cae al espejo del mismo archivo en un Release de este repo.
+    """
+    target = DATA_CACHE_DIR / f"senamhi_aire_lima_{dt.date.today():%Y%m%d}.csv"
+    logger.info("Descargando CSV de SENAMHI desde %s", url)
+    try:
+        _download_from(url, target, timeout)
+    except requests.RequestException as exc:
+        logger.warning("Fuente oficial de SENAMHI fallo (%s); uso el espejo del Release.", exc)
+        _download_from(SENAMHI_CSV_MIRROR_URL, target, timeout)
     logger.info("CSV guardado en %s (%.1f MB)", target, target.stat().st_size / 1e6)
     return target
 

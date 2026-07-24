@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from statsmodels.tsa.arima.model import ARIMA as _ARIMA
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 
@@ -87,4 +88,42 @@ def evaluate_and_forecast(
         "rmse_modelo": _rmse(test.values, pred_test.values),
         "mape_baseline": _mape(test.values, baseline.values),
         "rmse_baseline": _rmse(test.values, baseline.values),
+    }
+
+
+def evaluate_and_forecast_arima(
+    serie: pd.Series, horizon: int = 7, test_days: int = 30
+) -> dict:
+    """Evalua ARIMA en holdout y pronostica horizon dias.
+
+    Intenta (1,1,1) y degrada a ordenes mas simples si el ajuste falla.
+    """
+    if len(serie) < test_days + 60:
+        raise ValueError(
+            f"Serie demasiado corta ({len(serie)} dias) para evaluar con {test_days} dias de test."
+        )
+    train, test = serie.iloc[:-test_days], serie.iloc[-test_days:]
+
+    def _fit(s: pd.Series) -> object:
+        for order in [(1, 1, 1), (0, 1, 1), (1, 1, 0), (0, 1, 0)]:
+            try:
+                return _ARIMA(s, order=order).fit()
+            except Exception:
+                continue
+        raise ValueError("ARIMA no convergio con ningun orden.")
+
+    fit = _fit(train)
+    pred_test = pd.Series(fit.forecast(steps=test_days).values, index=test.index).clip(lower=0)
+
+    final_fit = _fit(serie)
+    future_idx = pd.date_range(serie.index[-1] + pd.Timedelta(days=1), periods=horizon, freq="D")
+    future = pd.Series(final_fit.forecast(steps=horizon).values, index=future_idx).clip(lower=0)
+
+    return {
+        "train": train,
+        "test": test,
+        "pred_test": pred_test,
+        "forecast": future,
+        "mape": _mape(test.values, pred_test.values),
+        "rmse": _rmse(test.values, pred_test.values),
     }

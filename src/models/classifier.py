@@ -1,4 +1,4 @@
-"""Panel 2: clasificacion de excedencia ECA de PM2.5 (RF vs XGBoost).
+"""Panel 2: clasificacion de excedencia ECA de PM2.5 (MLP vs RF vs XGBoost).
 
 La variable objetivo es 'excede_pm25' del dia t. Para evitar fuga de
 informacion (data leakage), las features solo usan datos de dias ANTERIORES
@@ -11,6 +11,7 @@ from imblearn.over_sampling import SMOTE
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
+    classification_report,
     confusion_matrix,
     f1_score,
     precision_score,
@@ -18,6 +19,9 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
 from src.data.eca import ECA_PM25_24H
@@ -55,13 +59,17 @@ def train_compare(
     test_size: float = 0.2,
     n_estimators: int = 200,
     learning_rate: float = 0.1,
+    mlp_epochs: int = 200,
+    mlp_activation: str = "relu",
     use_smote: bool | None = None,
     random_state: int = 42,
 ) -> dict:
-    """Entrena RF y XGBoost con el mismo split y devuelve metricas comparables.
+    """Entrena MLP, RF y XGBoost con el mismo split y devuelve metricas comparables.
 
     use_smote=None aplica la regla de negocio 5: SMOTE automatico si la clase
     minoritaria es < 20% (solo sobre train, nunca sobre test).
+    El MLP va dentro de un pipeline con StandardScaler (las redes lo necesitan;
+    los arboles no).
     """
     X = features.drop(columns=["excede_pm25", "fecha_dia"]).astype(float)
     y = features["excede_pm25"]
@@ -74,7 +82,9 @@ def train_compare(
     if use_smote is None:
         use_smote = minority_ratio < 0.20
     if use_smote:
-        X_train, y_train = SMOTE(random_state=random_state).fit_resample(X_train, y_train)
+        feature_cols = X_train.columns
+        X_arr, y_train = SMOTE(random_state=random_state).fit_resample(X_train, y_train)
+        X_train = pd.DataFrame(X_arr, columns=feature_cols)
 
     models = {
         "Random Forest": RandomForestClassifier(
@@ -86,6 +96,16 @@ def train_compare(
             eval_metric="logloss",
             random_state=random_state,
             n_jobs=-1,
+        ),
+        "MLP": make_pipeline(
+            StandardScaler(),
+            MLPClassifier(
+                hidden_layer_sizes=(64, 32),
+                activation=mlp_activation,
+                max_iter=mlp_epochs,
+                early_stopping=True,
+                random_state=random_state,
+            ),
         ),
     }
 
@@ -108,13 +128,32 @@ def train_compare(
             "f1": f1_score(y_test, y_pred, zero_division=0),
             "roc_auc": roc_auc_score(y_test, y_proba),
             "matriz_confusion": confusion_matrix(y_test, y_pred),
+            "reporte_clases": classification_report(
+                y_test, y_pred,
+                target_names=["no excede", "excede"],
+                output_dict=True,
+                zero_division=0,
+            ),
+            "y_proba": y_proba,
         }
     return results
+
+
+TREE_MODELS = ("Random Forest", "XGBoost")
 
 
 def best_model_name(results: dict) -> str:
     """Elige el mejor modelo por F1 (empate -> ROC-AUC)."""
     return max(
         results["modelos"],
+        key=lambda n: (results["modelos"][n]["f1"], results["modelos"][n]["roc_auc"]),
+    )
+
+
+def best_tree_name(results: dict) -> str:
+    """Mejor modelo DE ARBOLES por F1: SHAP TreeExplainer y feature_importances_
+    solo existen para RF/XGBoost, no para el pipeline del MLP."""
+    return max(
+        (n for n in results["modelos"] if n in TREE_MODELS),
         key=lambda n: (results["modelos"][n]["f1"], results["modelos"][n]["roc_auc"]),
     )

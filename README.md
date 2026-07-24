@@ -14,16 +14,18 @@ license: mit
 
 Proyecto del curso **Minería de Datos 2026-I (UNMSM — FISI)**. Dashboard analítico de 4 paneles construido con **datos reales del estado peruano**: el histórico horario de contaminantes de **SENAMHI** ([datosabiertos.gob.pe](https://www.datosabiertos.gob.pe/dataset/monitoreo-de-los-contaminantes-del-aire-en-lima-metropolitana-servicio-nacional-de), licencia ODC-BY) y el dato en vivo de la **API WAQI** ([aqicn.org](https://aqicn.org)).
 
-**Estado del despliegue:** hosting en definición. La app corre local con `streamlit run app.py`; el candidato para hosting gratuito es [Streamlit Community Cloud](https://share.streamlit.io) (conectar este repo → main file `app.py` → cargar secrets). Nota: el free tier de HF Spaces ya no soporta el SDK Streamlit (jul-2026).
+**Estado del despliegue:** hosting en [Streamlit Community Cloud](https://share.streamlit.io) (gratis, deploy directo desde GitHub). Nota: el free tier de HF Spaces ya no soporta el SDK Streamlit (jul-2026), por eso se descartó.
 
 ## Los 4 paneles
 
 | Panel | Contenido | Técnicas |
 |---|---|---|
-| 📊 EDA + Clustering | Estadísticas, histogramas/boxplots con outliers, correlaciones, K-means con codo y silueta | K-means, IQR |
-| 🤖 Predictivo | ¿El promedio diario de PM2.5 excederá el ECA peruano (50 µg/m³, D.S. 003-2017-MINAM)? | Random Forest vs XGBoost, SMOTE, SHAP |
-| 📈 Pronóstico | Serie diaria de PM2.5 por estación, pronóstico a 4-14 días con MAPE/RMSE vs baseline | Holt-Winters (statsmodels) |
-| 🗂️ CRUD | Guarda consultas: predicción del modelo vs valor real en vivo (WAQI). Editar/eliminar con trazabilidad | Supabase (Postgres) con fallback SQLite |
+| 📊 EDA + Clustering | Estadísticas, histogramas/boxplots con outliers (1.5·IQR), correlaciones, mapa de estaciones, K-means con codo y silueta, DBSCAN con detección de outliers | K-means vs DBSCAN, IQR |
+| 🤖 Predictivo | ¿El promedio diario de PM2.5 excederá el ECA peruano (50 µg/m³, D.S. 003-2017-MINAM)? Matriz de confusión y métricas por clase | MLP vs Random Forest vs XGBoost, SMOTE, SHAP |
+| 📈 Pronóstico | Serie diaria de PM2.5 por estación con tendencia, pronóstico a 4-14 días con MAPE/RMSE | Holt-Winters vs ARIMA(1,1,1) vs baseline MM-7d |
+| 🗂️ CRUD | Guarda consultas (automáticas con WAQI en vivo, o con **entrada manual de datos**): predicción del modelo + datos de entrada. Editar/eliminar con trazabilidad | Supabase (Postgres) con fallback SQLite |
+
+La correspondencia punto por punto con la rúbrica del curso está en [`docs/CHECKLIST_REQUISITOS.md`](docs/CHECKLIST_REQUISITOS.md).
 
 ## Arranque local
 
@@ -71,6 +73,22 @@ Fuentes (SENAMHI CSV + API WAQI) → src/ingest → src/data (limpieza + reglas 
 ## Variables de entorno
 
 Ver [`.env.example`](.env.example). En Hugging Face Spaces se cargan en *Settings → Variables and secrets* con los mismos nombres.
+
+## Despliegue en Streamlit Community Cloud
+
+1. Entra a [share.streamlit.io](https://share.streamlit.io) e inicia sesión con la cuenta de GitHub dueña del repo (`AxcelCH`).
+2. **New app** → selecciona el repo `AxcelCH/calidad-aire-lima` → **branch: `angela`** → **main file: `app.py`**.
+3. En *Advanced settings*, confirma la versión de Python 3.11 (el repo ya incluye [`runtime.txt`](runtime.txt) para fijarla; `pandas`/`numpy` en las versiones pineadas no tienen wheels para Python 3.13+).
+4. En *Secrets*, pega en formato TOML los mismos valores de tu `.env` local:
+
+   ```toml
+   WAQI_API_TOKEN = "..."
+   SUPABASE_URL = "..."
+   SUPABASE_ANON_KEY = "..."
+   ```
+
+   Sin esto, el CRUD sigue funcionando con SQLite local y el Panel 4 sin dato en vivo (degradación controlada).
+5. **Deploy**. La primera corrida descarga el CSV de SENAMHI (~65 MB), tarda más que las siguientes.
 
 ## Equipo
 
